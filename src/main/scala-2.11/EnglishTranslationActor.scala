@@ -1,26 +1,41 @@
 package com.igumnov.top3000words
 
-import akka.actor.{ActorRef, Actor, Props}
+import akka.actor.Actor
+import com.igumnov.top3000words.TranslateObjects.TranslationTranscription
+import com.typesafe.scalalogging.LazyLogging
 
-import scala.util.{Success, Failure}
-import concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.util.{Failure, Success}
 
-class EnglishTranslationActor (dictionaryActor: ActorRef) extends Actor {
-  println("EnglishTranslationActor")
+class EnglishTranslationActor extends Actor with LazyLogging {
+  override def receive = {
+    case Some(word: String) => {
+      val lastSender = sender
 
+      logger.info("english translate start word={}", word)
 
-  def receive = {
-    case (word: String, englishPage: String) => {
-      OxfordSite.parseTranslation(englishPage) match {
-        case Success((transcription, translation)) => {
-          dictionaryActor ! EnglishTranslation(word,translation)
-          dictionaryActor ! Transcription(word,transcription)
+      OxfordSite.getPage(word).map(tryEnglishPage => {
+        tryEnglishPage match {
+          case Success(englishPage) => {
+
+            OxfordSite.parseTranslation(englishPage) match {
+              case Success((transcription, translation)) => {
+               lastSender ! Some(TranslationTranscription(Some(transcription), Some(translation)))
+              }
+              case Failure(ex) => {
+                logger.error("english translate word={} error={}", word, ex)
+                lastSender ! None
+              }
+            }
+          }
+          case Failure(ex) =>
+            logger.error("english translate word={} error={}", word, ex)
+            lastSender ! None
         }
-        case Failure(ex) => {
-          println(ex.getMessage)
-        }
-      }
+      })
+
+      logger.info("english translate end word={}", word)
+
     }
   }
-
 }

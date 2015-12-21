@@ -1,75 +1,48 @@
 package com.igumnov.top3000words
 
-import java.util.concurrent.Executors
-
 import akka.actor.ActorSystem
 import akka.actor.Props
-import scala.concurrent.{Future, ExecutionContext}
-import scala.util.Success
-import scala.util.Failure
+import akka.pattern.ask
+import akka.util.Timeout
+import com.typesafe.scalalogging.LazyLogging
+import TranslateObjects.{TranslationTranscription, TranslatedWord}
+import scala.concurrent.{Future}
+import scala.concurrent.duration._
+import concurrent.ExecutionContext.Implicits.global
 
-object Top3000WordsApp extends App {
-
+object Top3000WordsApp extends App with LazyLogging {
 
   val system = ActorSystem("Top3000Words")
-  val dictionatyActor = system.actorOf(Props[DictionaryActor], "dictionatyActor")
-  val englishTranslationActor = system.actorOf(Props(classOf[EnglishTranslationActor], dictionatyActor), "englishTranslationActor")
-  val russianTranslationActor = system.actorOf(Props(classOf[RussianTranslationActor], dictionatyActor), "russianTranslationActor")
-  val mapGetPageThreadExecutionContext = ExecutionContext.fromExecutor(Executors.newFixedThreadPool(16))
-  val mapGetWordsThreadExecutionContext = ExecutionContext.fromExecutor(Executors.newFixedThreadPool(16))
-
 
   start()
 
-  scala.io.StdIn.readLine()
-  system.terminate()
+  //scala.io.StdIn.readLine()
+  //system.terminate()
+
   def start() = {
 
-    import concurrent.ExecutionContext.Implicits.global
+    implicit val timeout = Timeout(1000.second)
 
-    Future {
-      OxfordSite.getTableOfContent.par.foreach(letterGroup => {
-        getWords(letterGroup, 1)
-      })
+    logger.info("START")
 
+    val listFuture = Future.traverse(OxfordSite.getTableOfContent) { name =>
+      (system.actorOf(Props(new PagesActor())) ? Some(name))
+    }.mapTo[List[List[List[TranslatedWord]]]]
+
+
+    listFuture.map {
+      res => {
+        val strings: List[String] = res.flatten.flatten.map { word => word.toString}
+        logger.info("size " + strings.size)
+
+        val text = strings.mkString("\n")
+        scala.tools.nsc.io.File("dictionary.txt").writeAll(text)
+        logger.info("END")
+
+      }
     }
-  }
 
 
-  def getWords(letterGroup: String, pageNum: Int): Unit = {
-    implicit val executor = mapGetWordsThreadExecutionContext
-
-    OxfordSite.getWordsFromPage(letterGroup, pageNum).map(tryWords => {
-      tryWords match {
-        case Success(Some(words)) => words.par.foreach(word => {
-            parse(word,letterGroup,pageNum)
-        })
-        case Success(None) => Unit
-        case Failure(ex) => println(ex.getMessage)
-      }
-    })
-
-  }
-
-
-  def parse(word: String, letterGroup: String, pageNum: Int)= {
-
-    implicit val executor = mapGetPageThreadExecutionContext
-    OxfordSite.getPage(word).map(tryEnglishPage => {
-      tryEnglishPage match {
-        case Success(englishPage) => {
-          englishTranslationActor ! (word, englishPage)
-          getWords(letterGroup, pageNum + 1)
-        }
-        case Failure(ex) => println(ex.getMessage)
-      }
-    })
-    LingvoSite.getPage(word).map(_ match {
-      case Success(russianPage) => {
-        russianTranslationActor !(word, russianPage)
-      }
-      case Failure(ex) => println(ex.getMessage)
-    })
   }
 
 }
